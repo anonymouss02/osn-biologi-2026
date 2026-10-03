@@ -1,13 +1,14 @@
 #!/usr/bin/env node
-// Reads data.xlsx, computes every derived figure, renders dist/index.html from template.html.
-// Everything the page shows is derived here; the spreadsheet only ever holds raw marks + config.
+// Reads data/<year>.xlsx for every year, computes every derived figure, and renders one page per
+// year (dist/<year>/index.html) from template.html, plus the newest year again at dist/index.html.
+// Everything the page shows is derived here; the spreadsheets only ever hold raw marks + config.
 
 const XLSX = require('xlsx');
 const fs = require('fs');
 const path = require('path');
 
 const ROOT = __dirname;
-const SRC = path.join(ROOT, 'data.xlsx');
+const DATA_DIR = path.join(ROOT, 'data');
 const DIST = path.join(ROOT, 'dist');
 
 class DataError extends Error {}
@@ -212,8 +213,35 @@ function assignMedals(students, cfg) {
 // ---------- render ----------
 const round = (v, d = 3) => (v == null ? null : Math.round(v * 10 ** d) / 10 ** d);
 
-function build() {
-  const wb = XLSX.readFile(SRC);
+// ---------- years ----------
+// One workbook per year — data/2026.xlsx, data/2025.xlsx … — each complete with its own Exams and
+// Config sheets, because papers, max marks and medal cut-offs can change from one year to the next.
+const YEAR_FILE = /^(\d{4})\.xlsx$/;
+
+function findYears() {
+  if (!fs.existsSync(DATA_DIR)) {
+    bad("there is no data/ folder — put each year's spreadsheet there, named by year: data/2026.xlsx");
+  }
+  // Excel drops a "~$2026.xlsx" lock file beside any workbook it has open; that is never data.
+  const files = fs.readdirSync(DATA_DIR)
+    .filter((f) => f.endsWith('.xlsx') && !f.startsWith('~$') && !f.startsWith('.'));
+  const misnamed = files.find((f) => !YEAR_FILE.test(f));
+  if (misnamed) bad(`data/${misnamed} is not named after a year — rename it to the 4-digit year it covers, e.g. data/2026.xlsx`);
+  if (!files.length) bad('data/ has no spreadsheets — add one per year, named like data/2026.xlsx');
+  return files.map((f) => f.match(YEAR_FILE)[1]).sort().reverse(); // newest first
+}
+
+function readYear(year) {
+  const file = `data/${year}.xlsx`;
+  try {
+    return readWorkbook(XLSX.readFile(path.join(ROOT, file)));
+  } catch (err) {
+    if (err instanceof DataError) err.file = file;
+    throw err;
+  }
+}
+
+function readWorkbook(wb) {
   const exams = readExams(wb);
   const cfg = readConfig(wb);
   const students = compute(readResults(wb, exams), exams, cfg);
@@ -258,24 +286,52 @@ function build() {
     })),
   };
 
-  const html = fs
-    .readFileSync(path.join(ROOT, 'template.html'), 'utf8')
-    .replace('{{PAGE_TITLE}}', escapeHtml(str(cfg['page.title']) || data.meta.title))
+  return { data, pageTitle: str(cfg['page.title']) || data.meta.title };
+}
+
+function render(template, { data, pageTitle }, nav) {
+  return template
+    .replace('{{PAGE_TITLE}}', escapeHtml(pageTitle))
+    // Year pages sit one folder down (2025/index.html) and the root copy doesn't, so asset paths
+    // and year-switch links carry a prefix that makes them resolve from either place.
+    .replaceAll('{{BASE}}', nav.base)
     // JSON goes inside a <script>; only "</" can break out of it.
-    .replace('{{DATA}}', () => JSON.stringify(data).replace(/<\//g, '<\\/'));
+    .replace('{{DATA}}', () => JSON.stringify({ ...data, nav }).replace(/<\//g, '<\\/'));
+}
+
+function build() {
+  const years = findYears();
+  // Read and check every year before writing anything, so one bad spreadsheet can't leave a
+  // half-rebuilt site behind.
+  const pages = years.map((year) => ({ year, ...readYear(year) }));
+  const template = fs.readFileSync(path.join(ROOT, 'template.html'), 'utf8');
 
   fs.rmSync(DIST, { recursive: true, force: true });
-  fs.mkdirSync(DIST, { recursive: true });
-  fs.writeFileSync(path.join(DIST, 'index.html'), html);
+  const write = (rel, html) => {
+    const out = path.join(DIST, rel);
+    fs.mkdirSync(path.dirname(out), { recursive: true });
+    fs.writeFileSync(out, html);
+  };
+  for (const p of pages) {
+    write(`${p.year}/index.html`, render(template, p, { year: p.year, years, base: '../' }));
+  }
+  // The bare site URL always shows the newest year.
+  write('index.html', render(template, pages[0], { year: pages[0].year, years, base: '' }));
+
   if (fs.existsSync(path.join(ROOT, 'assets'))) {
     fs.cpSync(path.join(ROOT, 'assets'), path.join(DIST, 'assets'), { recursive: true });
   }
+  // Tells GitHub Pages to serve the files as-is instead of running them through Jekyll.
+  fs.writeFileSync(path.join(DIST, '.nojekyll'), '');
 
-  const kb = (fs.statSync(path.join(DIST, 'index.html')).size / 1024).toFixed(0);
-  console.log(`dist/index.html  ${kb} KB`);
-  console.log(`  ${data.meta.total} competitors · ${data.meta.countries} ${data.meta.regionPlural} · ${exams.length} exams`);
-  console.log(`  ${tiers.map((t) => `${t} ${medalCounts[t]}`).join(' · ')} · no medal ${medalCounts.none}`);
-  return data;
+  for (const p of pages) {
+    const { meta, exams, tiers, medalCounts } = p.data;
+    const kb = (fs.statSync(path.join(DIST, p.year, 'index.html')).size / 1024).toFixed(0);
+    console.log(`data/${p.year}.xlsx -> dist/${p.year}/index.html  ${kb} KB${p === pages[0] ? '  (also the site root)' : ''}`);
+    console.log(`  ${meta.total} competitors · ${meta.countries} ${meta.regionPlural} · ${exams.length} exams`);
+    console.log(`  ${tiers.map((t) => `${t} ${medalCounts[t]}`).join(' · ')} · no medal ${medalCounts.none}`);
+  }
+  return pages;
 }
 
 const escapeHtml = (s) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -285,7 +341,7 @@ if (require.main === module) {
     build();
   } catch (err) {
     if (err instanceof DataError) {
-      console.error(`\n  Build stopped — problem in data.xlsx:\n  ${err.message}\n`);
+      console.error(`\n  Build stopped — problem in ${err.file ?? 'the data/ folder'}:\n  ${err.message}\n`);
       process.exit(1);
     }
     throw err;

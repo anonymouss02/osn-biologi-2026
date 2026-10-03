@@ -1,85 +1,96 @@
 # Results site — GitHub Pages edition
 
 A static competition-results page — podium, score histogram, searchable/sortable ranking table,
-and a per-competitor exam breakdown — generated from a single Excel file, published by GitHub
-Actions to GitHub Pages.
+and a per-competitor exam breakdown — generated from one Excel file per year, with a **Year**
+dropdown to switch between them.
 
 ```bash
+nvm use           # Node 22, from .nvmrc — older Node versions cannot run build.js
 npm install
-npm run build     # data.xlsx  ->  dist/
+npm run build     # data/<year>.xlsx  ->  dist/
 npm test          # check the scoring maths
-npm run serve     # build and open a local server
+npm run pages     # build, then copy dist/ into docs/ for publishing
 ```
-
-This is the GitHub Pages variant of the project. The site itself is identical to the Netlify
-edition — the only difference is `.github/workflows/deploy.yml` in place of `netlify.toml`.
 
 ---
 
-## First-time setup
+## Years
 
-**1. Create the repo and push:**
+Each year is one spreadsheet in `data/`, named by the year it covers:
+
+```
+data/
+├── 2026.xlsx
+└── 2025.xlsx
+```
+
+Each one becomes its own page, and the newest year is also served at the bare URL:
+
+| URL | shows |
+|---|---|
+| `…/osn-biologi-2026/` | the newest year |
+| `…/osn-biologi-2026/2026/` | 2026 |
+| `…/osn-biologi-2026/2025/` | 2025 |
+
+The **Year** dropdown in the header lists every year found in `data/`, newest first. Choosing
+one opens that year's page.
+
+Every workbook is complete on its own, with its own `Results`, `Exams` and `Config` sheets. So
+each year can have different papers, max marks, medal cut-offs and wording.
+
+### Adding a year
+
+1. Copy last year's workbook as a starting point, for example `data/2026.xlsx` → `data/2027.xlsx`.
+2. Replace the rows in its `Results` sheet with the new year's competitors.
+3. Update its `Exams` sheet if the papers or max marks changed.
+4. Update its `Config` sheet: `page.title`, `event.eyebrow` and `event.footer` (they mention the
+   year and city), plus the `medal.*_through` cut-offs if they changed.
+5. Publish (below).
+
+The filename must be exactly the 4-digit year. A name like `2027 (1).xlsx` stops the build with
+a message saying which file to rename. Excel's own `~$2027.xlsx` lock files are ignored.
+
+---
+
+## Publishing
+
+Pages for this repo is set to **Deploy from a branch → `main` / `/docs`**, so the site is whatever
+is committed in `docs/`. After any change to a spreadsheet, the template or the images:
 
 ```bash
-cd ~/results-site-ghpages
-git init -b main
-git add .
-git commit -m "OSN Biologi 2026 results site"
-git remote add origin https://github.com/YOUR-USERNAME/YOUR-REPO.git
-git push -u origin main
+npm run pages
+git add -A
+git commit -m "update results"
+git push
 ```
 
-**2. Turn Pages on:** in the repo, go to **Settings → Pages → Build and deployment → Source** and
-select **GitHub Actions**. Not "Deploy from a branch" — the workflow needs the Actions source.
+`npm run pages` rebuilds every year and replaces `docs/` with the result. If you skip it, the
+push still goes through, but the live site keeps showing the old `docs/`.
 
-**3. Watch it deploy:** the **Actions** tab shows the run. First one takes about a minute. When it
-finishes, your URL appears there and under Settings → Pages, as
-`https://YOUR-USERNAME.github.io/YOUR-REPO/`.
+### Automatic builds (once GitHub Actions is available on the account)
 
-That's it. From then on:
+`.github/workflows/deploy.yml` can do the build on GitHub instead: on every push it runs
+`npm ci`, `npm test` and `npm run build`, then publishes `dist/`. To use it, set
+**Settings → Pages → Source → GitHub Actions**. From then on a plain `git push` publishes, and
+`docs/` is no longer used.
 
-```bash
-git add data.xlsx && git commit -m "update results" && git push
-```
+### Public repository
 
-The workflow rebuilds and republishes automatically. **You never run `npm run build` for a
-deploy** — GitHub does it.
+Free GitHub Pages requires a public repository, so every `data/*.xlsx` file, with the raw marks
+for every competitor in every year, is publicly downloadable from the repo.
 
----
+### Paths
 
-## What the workflow does
-
-`.github/workflows/deploy.yml` runs on every push to `main`:
-
-1. `npm ci` — install from the lockfile
-2. `npm test` — the scoring self-check (273,870 assertions)
-3. `npm run build` — render `dist/` from `data.xlsx`
-4. upload `dist/` and publish it to Pages
-
-Steps 2 and 3 are both gates. If the maths breaks or `data.xlsx` has a bad cell, the run fails and
-**the previously published site stays up untouched** — you never publish a broken page.
-
-You can also re-deploy without a commit: **Actions → Deploy to GitHub Pages → Run workflow**.
+The site lives under a subpath (`username.github.io/repo-name/`), and year pages sit one folder
+deeper. Every asset and link in the page is relative, with the build adding the `../` that year
+pages need, so it works at any depth with no configuration.
 
 ---
 
-## Two things to know about Pages
+## Editing a year's data
 
-**Free GitHub Pages requires a public repository.** That makes `data.xlsx` publicly downloadable —
-not just the rendered site, but the raw marks for every competitor. If that isn't acceptable, you
-need GitHub Pro/Team (Pages on a private repo), or use the Netlify edition, where the repo can stay
-private and only the built site is public.
-
-**Project sites live under a subpath** (`username.github.io/repo-name/`). Every asset in the page is
-referenced relatively (`assets/logo.png`, never `/assets/logo.png`), so this works with no
-configuration. Don't change those to absolute paths or the images will 404 on Pages.
-
----
-
-## Editing the data
-
-Everything lives in **`data.xlsx`**. You only ever enter raw marks — every z-score, rank, medal
-and overall score is recomputed at build time.
+You only ever enter raw marks — every z-score, rank, medal and overall score is recomputed at
+build time.
 
 ### Sheet `Results` — one row per competitor
 
@@ -92,7 +103,7 @@ matching a `key` from the `Exams` sheet. Leave a cell blank if the competitor di
 
 The part of `code` before the first `-` is shown as the region tag (`KPR-S1` → `KPR`).
 
-The column is named `country` for historical reasons but it is just a grouping label — set
+The column is named `country` for historical reasons but it is just a grouping label. Set
 `label.region` / `label.region_plural` in `Config` to display it as Province, State, School, or
 anything else. The column header itself must stay `country`.
 
@@ -104,7 +115,7 @@ anything else. The column header itself must stay `country`.
 | ta | Theory A | theory | 50 | #E8BC05 | |
 
 - **`group`** must be `practical` or `theory`.
-- **`max`** is the paper's maximum mark — it drives the progress bars and range-checks your data.
+- **`max`** is the paper's maximum mark. It drives the progress bars and range-checks your data.
 - **`tag`** is the small coloured pill in the breakdown; leave blank for a plain dot.
 
 Add or remove rows freely. The table columns, the modal and the footer text all follow.
@@ -136,46 +147,50 @@ Add or remove rows freely. The table columns, the modal and the footer text all 
 1. **Per exam** — `z = (mark − mean) / stdev`, using the sample standard deviation (n−1), over
    everyone who sat that exam.
 2. **Per group** — one composite z per group, controlled by `composite.<group>`:
-   - `z-sum` — add up the group's *z-scores*, then z-score that sum. Right when the exams have
-     different maximums or difficulties, since it weights each one equally.
-   - `raw-sum` — add up the group's *raw marks*, then z-score that sum. Right when the papers are
+   - `z-sum` — add up the group's *z-scores*, then z-score that sum. Weights each exam equally,
+     which suits exams with different maximums or spreads.
+   - `raw-sum` — add up the group's *raw marks*, then z-score that sum. Suits papers that are
      directly comparable.
 3. **Overall** — `base + scale × mean(practical z, theory z)`, so an average competitor scores
    exactly `base`.
 4. **Rank** — by overall score, descending.
 5. **Medals** — by rank, using the `medal.*_through` cut-offs.
 
+Scores are computed within a year only; years are never compared or mixed.
+
 A competitor who misses any exam in a group gets no composite for that group, and therefore no
 overall score and no rank. They still appear in the table, marked `—`.
 
-**Ties share a rank.** Two identical scores both get rank 5, and the next competitor is 7th. This
-matters because medals are handed out by rank: splitting a genuine tie would hand one competitor
-Gold and the other Silver on nothing but spreadsheet row order.
+**Ties share a rank.** Two identical scores both get rank 5, and the next competitor is 7th.
+Medals are handed out by rank, so splitting a tie would decide Gold versus Silver on spreadsheet
+row order.
 
 ---
 
 ## When the build fails
 
-The build refuses to produce a page from data it does not understand, and tells you where to look:
+The build refuses to produce pages from data it does not understand, and says which file and
+cell to look at:
 
 ```
-Build stopped — problem in data.xlsx:
-Sheet "Results", row 12, column "ta": "44.o" is not a number
+Build stopped — problem in data/2025.xlsx:
+Sheet "Results", row 3, column "mb": "abc" is not a number
 ```
 
-It checks for unknown columns, missing exam columns, duplicate competitor codes, missing names,
-non-numeric marks, and marks outside `0…max`. On GitHub this shows up as a failed Actions run,
-with the live site left as it was.
+It checks for misnamed files in `data/`, unknown columns, missing exam columns, duplicate
+competitor codes, missing names, non-numeric marks, and marks outside `0…max`. Every year is
+checked before anything is written, so a failed build leaves the previous `dist/` and `docs/`
+untouched.
 
 ---
 
 ## Swapping the branding
 
-`assets/logo.png` and `assets/garland.png` are the header logo and the decorative strip beneath it.
-Replace the two files — the template references them by name, so nothing else changes.
+`assets/logo.png` and `assets/garland.png` are the header logo and the decorative strip beneath it,
+shared by every year. Replace the files and nothing else needs changing.
 
-> The images currently in `assets/` are the IBO 2026 event's own branding, carried over from the
-> site this page was modelled on. Replace them before publishing.
+> `assets/garland.png` is the IBO 2026 event's own artwork, carried over from the site this page
+> was modelled on.
 
 ---
 
@@ -183,8 +198,10 @@ Replace the two files — the template references them by name, so nothing else 
 
 | | |
 |---|---|
-| `data.xlsx` | the only file you edit day to day |
-| `build.js` | reads the spreadsheet, computes everything, writes `dist/` |
+| `data/<year>.xlsx` | one workbook per year — the only files you edit day to day |
+| `build.js` | reads every workbook, computes everything, writes `dist/` |
 | `template.html` | page markup, CSS and browser JS — edit to restyle |
 | `verify.js` | `npm test`; checks the maths, including against 302 rows of real published results |
-| `.github/workflows/deploy.yml` | builds and publishes to Pages on every push |
+| `docs/` | the published copy of `dist/`, refreshed by `npm run pages` |
+| `.github/workflows/deploy.yml` | automatic build-and-publish, for when Actions is available |
+| `.nvmrc` | pins Node 22 for `nvm use` |
